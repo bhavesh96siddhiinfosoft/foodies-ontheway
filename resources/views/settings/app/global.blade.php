@@ -224,6 +224,19 @@
                                 <label class="col-5 control-label" for="auto_approve_driver">{{ trans('lang.auto_approve_driver') }}</label>
                             </div>
                         </div>
+                        <div class="form-group row width-100">
+                            <label class="col-4 control-label" for="order_assignment">{{ trans('lang.order_assignment') }}</label>
+                            <div class="col-7">
+                                <select name="order_assignment" id="order_assignment" class="form-control">
+                                    <option value="sequential">{{ trans('lang.order_assignment_sequential') }}</option>
+                                    <option value="broadcasting">{{ trans('lang.order_assignment_broadcasting') }}</option>
+                                </select>
+                            </div>
+                            <div class="form-text pl-3 text-muted">
+                                <strong>{{ trans('lang.order_assignment_sequential') }}</strong> — {{ trans('lang.order_assignment_sequential_help') }}<br>
+                                <strong>{{ trans('lang.order_assignment_broadcasting') }}</strong> — {{ trans('lang.order_assignment_broadcasting_help') }}
+                            </div>
+                        </div>
                     </fieldset>
                     <fieldset>
                         <legend><i class="mr-3 mdi mdi-cash-100"></i>{{ trans('lang.wallet_settings') }}</legend>
@@ -703,6 +716,7 @@
                 } else {
                     $('#auto_approve_driver').prop('checked', false);
                 }
+                $('#order_assignment').val(DriverNearData.orderAssignmentType === 'broadcasting' ? 'broadcasting' : 'sequential');
             });
 
             referralAmountRef.get().then(async function(snapshots) {
@@ -782,6 +796,7 @@
             var driver_location_update = $('#driver_location_update').val();
             var single_order_receive = $("#single_order_receive").is(":checked");
             var auto_approve_driver = $("#auto_approve_driver").is(":checked");
+            var order_assignment_type = $('#order_assignment').val() === 'broadcasting' ? 'broadcasting' : 'sequential';
             var enable_adv_feature = $("#enable_adv_feature").is(":checked");
             var enable_self_delivery = $("#enable_self_delivery").is(":checked");
             var api_base_url = "{{ url('/') }}";
@@ -911,7 +926,8 @@
                             'mapType': map_type,
                             'driverLocationUpdate': driver_location_update,
                             'singleOrderReceive': single_order_receive,
-                            'auto_approve_driver': auto_approve_driver
+                            'auto_approve_driver': auto_approve_driver,
+                            'orderAssignmentType': order_assignment_type
                         });
                         database.collection('settings').doc("referral_amount").update({
                             'referralAmount': referralAmount
