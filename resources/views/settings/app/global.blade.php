@@ -237,6 +237,15 @@
                                 <strong>{{ trans('lang.order_assignment_broadcasting') }}</strong> — {{ trans('lang.order_assignment_broadcasting_help') }}
                             </div>
                         </div>
+                        <div class="form-group row width-100">
+                            <div class="form-check width-100">
+                                <input type="checkbox" class="form-check-inline" id="broadcast_orders">
+                                <label class="col-5 control-label" for="broadcast_orders">{{ trans('lang.broadcast_orders_by_zone') }}</label>
+                            </div>
+                            <div class="form-text pl-3 text-muted">
+                                {{ trans('lang.broadcast_orders_by_zone_help') }}
+                            </div>
+                        </div>
                     </fieldset>
                     <fieldset>
                         <legend><i class="mr-3 mdi mdi-cash-100"></i>{{ trans('lang.wallet_settings') }}</legend>
@@ -254,6 +263,26 @@
                                 <div class="control-inner">
                                     <input type="number" class="form-control minimum_withdrawal_amount">
                                 </div>
+                            </div>
+                        </div>
+                        <div class="form-group row width-100">
+                            <div class="form-check width-100">
+                                <input type="checkbox" class="form-check-inline" id="separate_cod_ledger">
+                                <label class="col-5 control-label" for="separate_cod_ledger">{{ trans('lang.separate_cod_ledger') }}</label>
+                            </div>
+                            <div class="form-text pl-3 text-muted">
+                                {{ trans('lang.separate_cod_ledger_help') }}
+                            </div>
+                        </div>
+                        <div class="form-group row width-100">
+                            <label class="col-4 control-label" for="cod_debt_limit">{{ trans('lang.cod_debt_limit') }}</label>
+                            <div class="col-7">
+                                <div class="control-inner">
+                                    <input type="number" class="form-control" id="cod_debt_limit" min="0">
+                                </div>
+                            </div>
+                            <div class="form-text pl-3 text-muted">
+                                {{ trans('lang.cod_debt_limit_help') }}
                             </div>
                         </div>
                     </fieldset>
@@ -717,6 +746,10 @@
                     $('#auto_approve_driver').prop('checked', false);
                 }
                 $('#order_assignment').val(DriverNearData.orderAssignmentType === 'broadcasting' ? 'broadcasting' : 'sequential');
+                // The apps treat a missing broadcastOrders / separateCodLedger as on
+                $('#broadcast_orders').prop('checked', DriverNearData.broadcastOrders !== false);
+                $('#separate_cod_ledger').prop('checked', DriverNearData.separateCodLedger !== false);
+                $('#cod_debt_limit').val(DriverNearData.codDebtLimit ? DriverNearData.codDebtLimit : 0);
             });
 
             referralAmountRef.get().then(async function(snapshots) {
@@ -797,6 +830,12 @@
             var single_order_receive = $("#single_order_receive").is(":checked");
             var auto_approve_driver = $("#auto_approve_driver").is(":checked");
             var order_assignment_type = $('#order_assignment').val() === 'broadcasting' ? 'broadcasting' : 'sequential';
+            var broadcast_orders = $("#broadcast_orders").is(":checked");
+            var separate_cod_ledger = $("#separate_cod_ledger").is(":checked");
+            var cod_debt_limit = parseFloat($('#cod_debt_limit').val());
+            if (isNaN(cod_debt_limit) || cod_debt_limit < 0) {
+                cod_debt_limit = 0;
+            }
             var enable_adv_feature = $("#enable_adv_feature").is(":checked");
             var enable_self_delivery = $("#enable_self_delivery").is(":checked");
             var api_base_url = "{{ url('/') }}";
@@ -927,7 +966,10 @@
                             'driverLocationUpdate': driver_location_update,
                             'singleOrderReceive': single_order_receive,
                             'auto_approve_driver': auto_approve_driver,
-                            'orderAssignmentType': order_assignment_type
+                            'orderAssignmentType': order_assignment_type,
+                            'broadcastOrders': broadcast_orders,
+                            'separateCodLedger': separate_cod_ledger,
+                            'codDebtLimit': cod_debt_limit
                         });
                         database.collection('settings').doc("referral_amount").update({
                             'referralAmount': referralAmount
