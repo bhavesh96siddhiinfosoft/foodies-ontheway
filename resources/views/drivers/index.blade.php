@@ -37,6 +37,19 @@
                             </div>
                             <div class="d-flex top-title-right align-self-center">
                                 <div class="select-box pl-3">
+                                    <select class="form-control driver_zone_selector filteredRecords">
+                                        <option value="" selected>{{ trans('lang.select_zone') }}</option>
+                                        <option value="__none__">{{ trans('lang.driver_no_zone') }}</option>
+                                    </select>
+                                </div>
+                                <div class="select-box pl-3">
+                                    <select class="form-control online_selector filteredRecords">
+                                        <option value="" selected>{{ trans('lang.driver_online_status') }}</option>
+                                        <option value="online">{{ trans('lang.driver_online') }}</option>
+                                        <option value="offline">{{ trans('lang.driver_offline') }}</option>
+                                    </select>
+                                </div>
+                                <div class="select-box pl-3">
                                     <select class="form-control status_selector filteredRecords">
                                         <option value="" selected>{{ trans('lang.status') }}</option>
                                         <option value="active">{{ trans('lang.active') }}</option>
@@ -54,6 +67,17 @@
                 </div>
             </div>
             <div class="table-list">
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card border mb-3">
+                            <div class="card-header border-0 pb-0">
+                                <h3 class="text-dark-2 mb-1 h4">{{ trans('lang.online_drivers_by_zone') }}</h3>
+                                <p class="mb-0 text-dark-2">{{ trans('lang.online_drivers_by_zone_text') }}</p>
+                            </div>
+                            <div class="card-body d-flex flex-wrap zone_online_summary"></div>
+                        </div>
+                    </div>
+                </div>
                 <div class="row">
                     <div class="col-12">
                         <div class="card border">
@@ -83,6 +107,7 @@
                                                 <?php } ?>
                                                 <th>{{ trans('lang.user_name') }}</th>
                                                 <th>{{ trans('lang.email') }}</th>
+                                                <th>{{ trans('lang.driver_zone') }}</th>
                                                 <th>{{ trans('lang.date') }}</th>
                                                 <th>{{ trans('lang.document_plural') }}</th>
                                                 <th>{{ trans('lang.driver_active') }}</th>
@@ -135,6 +160,83 @@
             placeholder: "{{ trans('lang.select_status') }}",
             minimumResultsForSearch: Infinity,
             allowClear: true
+        });
+        $('.driver_zone_selector').select2({
+            placeholder: "{{ trans('lang.select_zone') }}",
+            allowClear: true
+        });
+        $('.online_selector').select2({
+            placeholder: "{{ trans('lang.driver_online_status') }}",
+            minimumResultsForSearch: Infinity,
+            allowClear: true
+        });
+
+        // Zone names by id. Unpublished zones are kept too, so a driver still assigned
+        // to one shows its name instead of a blank. Only published zones go in the filter.
+        var zoneNames = {};
+        var zonesLoaded = database.collection('zone').orderBy('name', 'asc').get().then(function(snapshots) {
+            snapshots.docs.forEach(function(doc) {
+                var zone = doc.data();
+                zoneNames[doc.id] = zone.name;
+                if (zone.publish) {
+                    $('.driver_zone_selector').append($("<option></option>").attr("value", doc.id).text(zone.name));
+                }
+            });
+        }).catch(function(error) {
+            console.error("Error loading zones:", error);
+        });
+
+        function driverZoneName(driver) {
+            if (!driver.zoneId) {
+                return '';
+            }
+            return zoneNames[driver.zoneId] ? zoneNames[driver.zoneId] : driver.zoneId;
+        }
+
+        function escapeHtml(text) {
+            return $('<div>').text(text).html();
+        }
+
+        // Online drivers per zone, live. Same drivers as the table: restaurants' own
+        // delivery men (vendorID set) are left out.
+        zonesLoaded.then(function() {
+            alldriver.onSnapshot(function(snapshot) {
+                var counts = {};
+                snapshot.forEach(function(doc) {
+                    var driver = doc.data();
+                    if (driver.vendorID) {
+                        return;
+                    }
+                    var key = driver.zoneId ? driver.zoneId : '__none__';
+                    if (!counts[key]) {
+                        counts[key] = { total: 0, online: 0 };
+                    }
+                    counts[key].total++;
+                    if (driver.isActive) {
+                        counts[key].online++;
+                    }
+                });
+                var keys = Object.keys(counts).sort(function(a, b) {
+                    if (a == '__none__') return 1;
+                    if (b == '__none__') return -1;
+                    return (zoneNames[a] || a).localeCompare(zoneNames[b] || b);
+                });
+                var html = '';
+                keys.forEach(function(key) {
+                    var name = key == '__none__' ? "{{ trans('lang.driver_no_zone') }}" : (zoneNames[key] || key);
+                    html += '<a href="javascript:void(0)" class="btn btn-light border mr-2 mb-2 zone-online-chip" data-zone="' + escapeHtml(key) + '">' +
+                        escapeHtml(name) + ': <strong>' + counts[key].online + '</strong> / ' + counts[key].total + ' {{ trans('lang.driver_online') }}</a>';
+                });
+                $('.zone_online_summary').html(html ? html : '<span class="text-muted">-</span>');
+            }, function(error) {
+                console.error("Error loading online drivers by zone:", error);
+            });
+        });
+
+        // A zone in the summary filters the table to that zone's online drivers
+        $(document).on('click', '.zone-online-chip', function() {
+            $('.driver_zone_selector').val($(this).data('zone')).trigger('change.select2');
+            $('.online_selector').val('online').trigger('change');
         });
         $('select').on("select2:unselecting", function(e) {
             var self = $(this);
@@ -205,6 +307,10 @@
                         header: "{{ trans('lang.email') }}"
                     },
                     {
+                        key: 'zoneName',
+                        header: "{{ trans('lang.driver_zone') }}"
+                    },
+                    {
                         key: 'active',
                         header: "{{ trans('lang.driver_active') }}"
                     },
@@ -226,12 +332,18 @@
                     const searchValue = data.search.value.toLowerCase();
                     const orderColumnIndex = data.order[0].column;
                     const orderDirection = data.order[0].dir;
-                    const orderableColumns = (checkDeletePermission) ? ['', 'fullName', 'email', 'createdAt', '', '', '', '', '', ''] : ['fullName', 'email', 'createdAt', '', '', '', '', '', ''];
+                    const orderableColumns = (checkDeletePermission) ? ['', 'fullName', 'email', 'zoneName', 'createdAt', '', '', '', '', '', ''] : ['fullName', 'email', 'zoneName', 'createdAt', '', '', '', '', '', ''];
                     const orderByField = orderableColumns[orderColumnIndex]; // Adjust the index to match your table
+                    // Zone and online are filtered here rather than in the query, so no new
+                    // Firestore composite index is needed.
+                    const zoneFilter = $('.driver_zone_selector').val();
+                    const onlineFilter = $('.online_selector').val();
                     if (searchValue.length >= 3 || searchValue.length === 0) {
                         $('#data-table_processing').show();
                     }
-                    ref.orderBy('createdAt', 'desc').get().then(async function(querySnapshot) {
+                    zonesLoaded.then(function() {
+                        return ref.orderBy('createdAt', 'desc').get();
+                    }).then(async function(querySnapshot) {
                         if (querySnapshot.empty) {
                             $('.driver_count').text(0);
                             console.error("No data found in Firestore.");
@@ -250,9 +362,19 @@
                         querySnapshot.forEach(function(doc) {
                             let childData = doc.data();
                             if (!childData.hasOwnProperty('vendorID') || (childData.hasOwnProperty('vendorID') && (childData.vendorID=='' || childData.vendorID==null))) {
+                                if (zoneFilter == '__none__' && childData.zoneId) {
+                                    return;
+                                }
+                                if (zoneFilter && zoneFilter != '__none__' && childData.zoneId != zoneFilter) {
+                                    return;
+                                }
+                                if ((onlineFilter == 'online' && !childData.isActive) || (onlineFilter == 'offline' && childData.isActive)) {
+                                    return;
+                                }
                                 childData.id = doc.id; // Ensure the document ID is included in the data
                                 childData.fullName = childData.firstName + ' ' + childData.lastName || " "
                                 childData.email = shortEmail(childData.email);
+                                childData.zoneName = driverZoneName(childData);
                                 if (searchValue) {
                                     var date = '';
                                     var time = '';
@@ -265,7 +387,8 @@
                                     var createdAt = date + ' ' + time;
                                     if (
                                         (childData.fullName && childData.fullName.toString().toLowerCase().includes(searchValue)) ||
-                                        (createdAt && createdAt.toString().toLowerCase().indexOf(searchValue) > -1) || (childData.email && childData.email.toString().includes(searchValue))
+                                        (createdAt && createdAt.toString().toLowerCase().indexOf(searchValue) > -1) || (childData.email && childData.email.toString().includes(searchValue)) ||
+                                        (childData.zoneName && childData.zoneName.toString().toLowerCase().includes(searchValue))
                                     ) {
                                         filteredRecords.push(childData);
                                     }
@@ -326,6 +449,7 @@
                                 checkDeletePermission ? '<td class="delete-all"><input type="checkbox" id="is_open_' + childData.id + '" class="is_open" dataId="' + childData.id + '"><label class="col-3 control-label"\n' + 'for="is_open_' + childData.id + '" ></label></td>' : '',
                                 driverImage + '<a href="' + driverView + '" class="redirecttopage">' + childData.fullName + '</a>',
                                 childData.email ? childData.email : ' ',
+                                childData.zoneName ? escapeHtml(childData.zoneName) : '<span class="text-muted">{{ trans('lang.driver_no_zone') }}</span>',
                                 date + ' ' + time,
                                 '<a href="' + document_list_view + '"><i class="fa fa-file"></i></a>',
                                 childData.active ? '<label class="switch"><input type="checkbox" checked id="' + childData.id + '" name="isActive"><span class="slider round"></span></label>' : '<label class="switch"><input type="checkbox" id="' + childData.id + '" name="isActive"><span class="slider round"></span></label>',
@@ -359,9 +483,9 @@
                         });
                     });
                 },
-                order: (checkDeletePermission) ? [3, 'desc'] : [2, 'desc'],
+                order: (checkDeletePermission) ? [4, 'desc'] : [3, 'desc'],
                 columnDefs: [{
-                        targets: (checkDeletePermission) ? 3 : 2,
+                        targets: (checkDeletePermission) ? 4 : 3,
                         type: 'date',
                         render: function(data) {
                             return data;
@@ -369,7 +493,7 @@
                     },
                     {
                         orderable: false,
-                        targets: (checkDeletePermission) ? [0, 4, 5, 6, 7, 8, 9] : [3, 4, 5, 6, 7, 8]
+                        targets: (checkDeletePermission) ? [0, 5, 6, 7, 8, 9, 10] : [4, 5, 6, 7, 8, 9]
                     },
                 ],
                 "language": datatableLang,
