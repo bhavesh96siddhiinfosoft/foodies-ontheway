@@ -608,6 +608,15 @@
                                                 </tr>
                                                 <tr>
                                                     <td>
+                                                        <strong>{{ trans('lang.cod_settlements') }}</strong>
+                                                    </td>
+                                                    <td>
+                                                        <input type="checkbox" id="cod-settlements" value="cod.settlements" name="cod-settlements[]" class="permission" {{ in_array('cod.settlements', $permissions) ? 'checked' : '' }}>
+                                                        <label class="contol-label2" for="cod-settlements">{{ trans('lang.cod_settlements_permission') }}</label>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td>
                                                         <strong>{{ trans('lang.menu_items') }}</strong>
                                                     </td>
                                                     <td>

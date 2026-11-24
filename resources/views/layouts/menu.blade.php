@@ -286,8 +286,18 @@
             
         @endif
 
-        @if (in_array('payout-request', $role_has_permission))
+        @if (in_array('payout-request', $role_has_permission) || in_array('cod-settlements', $role_has_permission))
             <li class="nav-subtitle"><span class="nav-subtitle-span">{{ trans('lang.disbursement_management') }}</span></li>
+        @endif
+        @if (in_array('cod-settlements', $role_has_permission))
+            <li>
+                <a class="waves-effect waves-dark" href="{{ route('cod.settlements') }}" aria-expanded="false">
+                    <i class="mdi mdi-cash-multiple"></i>
+                    <span class="hide-menu">{{ trans('lang.cod_settlements') }}</span>
+                </a>
+            </li>
+        @endif
+        @if (in_array('payout-request', $role_has_permission))
             <li><a class="has-arrow waves-effect waves-dark" href="#" aria-expanded="false">
                     <i class="mdi mdi-bank"></i>
                     <span class="hide-menu">{{ trans('lang.disbursements') }}</span>

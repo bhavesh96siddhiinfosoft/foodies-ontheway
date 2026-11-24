@@ -280,6 +280,9 @@ Route::middleware(['permission:payout-request,payoutRequests.drivers'])->group(f
     Route::get('/payoutRequests/drivers', [App\Http\Controllers\PayoutRequestController::class, 'index'])->name('payoutRequests.drivers');
     Route::get('/payoutRequests/drivers/{id}', [App\Http\Controllers\PayoutRequestController::class, 'index'])->name('payoutRequests.drivers.view');
 });
+Route::middleware(['permission:cod-settlements,cod.settlements'])->group(function () {
+    Route::get('/cod-settlements', [App\Http\Controllers\CodSettlementController::class, 'index'])->name('cod.settlements');
+});
 Route::middleware(['permission:payout-request,payoutRequests.restaurants'])->group(function () {
     Route::get('/payoutRequests/restaurants', [App\Http\Controllers\PayoutRequestController::class, 'restaurant'])->name('payoutRequests.restaurants');
     Route::get('/payoutRequests/restaurants/{id}', [App\Http\Controllers\PayoutRequestController::class, 'restaurant'])->name('payoutRequests.restaurants.view');

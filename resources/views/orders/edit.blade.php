@@ -528,13 +528,22 @@
         })
         
         var singleOrderReceive = false;
+        // the apps treat a missing separateCodLedger as on
+        var separateCodLedger = true;
         var refDriverNearBy = database.collection('settings').doc("DriverNearBy");
         refDriverNearBy.get().then(async function(snapshot) {
             var data = snapshot.data();
             if (data.singleOrderReceive) {
                 singleOrderReceive = true;
             }
+            separateCodLedger = data.separateCodLedger !== false;
         })
+
+        // Set by buildHTMLProductstotal, used when the admin completes the order
+        var orderGrandTotal = 0;
+        var orderDeliveryCharge = 0;
+        var orderTipAmount = 0;
+        var orderDeliveryTaxAmount = 0;
 
         var scheduleOrderAcceptData = {};
         var scheduleOrderNotificationRef = database.collection('settings').doc("scheduleOrderNotification");
@@ -1321,45 +1330,8 @@
 
                                         await getUserCashbackAmount();
                                     }
-                                    driverAmount = parseFloat(deliveryCharge) + parseFloat(
-                                        tip_amount);
-                                    if (driverId && driverAmount) {
-                                        var driver = database.collection('users').where(
-                                            "id", "==", driverId);
-                                        await driver.get().then(async function(
-                                            snapshotsdriver) {
-                                            var driverdata = snapshotsdriver.docs[0].data();
-                                            if (driverdata.orderRequestData !== undefined) {
-                                                const newOrderRequestData = driverdata.orderRequestData.filter(function(oid) {
-                                                    return oid !== id;
-                                                });
-                                            }
-                                            if (driverdata.inProgressOrderID !== undefined) {
-                                                const inProgressOrderID = driverdata.inProgressOrderID.filter(function(oid) {
-                                                    return oid !== id;
-                                                });
-                                            }
-                                            if (driverdata) {
-                                                if (isNaN(driverdata.wallet_amount) || driverdata.wallet_amount == undefined) {
-                                                    driverWallet = 0;
-                                                } else {
-                                                    driverWallet = driverdata.wallet_amount;
-                                                }
-                                                if (orderPaymentMethod == 'cod' && orderTakeAwayOption == true) {
-                                                    driverWallet = parseFloat(driverWallet) - parseFloat(total_price);
-                                                } else {
-                                                    driverWallet = parseFloat(driverWallet) + parseFloat(driverAmount);
-                                                }
-                                                if (!isNaN(driverWallet)) {
-                                                    await database.collection('users').doc(driverdata.id)
-                                                        .update({
-                                                            'wallet_amount': parseFloat(driverWallet),
-                                                            'orderRequestData': newOrderRequestData,
-                                                            'inProgressOrderID': inProgressOrderID
-                                                        }).then(async function(result) {});
-                                                }
-                                            }
-                                        })
+                                    if (orderTakeAwayOption == false) {
+                                        await completeOrderForDriver();
                                     }
                                 }
                                 await $.ajax({
@@ -1509,6 +1481,87 @@
                 }
             })
         })
+        // The admin marks a delivery order Order Completed instead of the driver app.
+        // With the separate COD ledger, the driver's earnings go into the wallet as
+        // wallet/earn_<orderId> and a COD order's cash goes into cod_ledger/cod_<orderId>:
+        // the same document ids the driver app uses, checked in one transaction, so the
+        // order is credited once whichever side completes it. With the ledger off, the old
+        // wallet accounting stays with the driver app and only the driver is released.
+        async function completeOrderForDriver() {
+            var round2 = function(value) {
+                return Math.round((parseFloat(value || 0) + Number.EPSILON) * 100) / 100;
+            };
+            var release = {
+                'inProgressOrderID': firebase.firestore.FieldValue.arrayRemove(id),
+                'orderRequestData': firebase.firestore.FieldValue.arrayRemove(id)
+            };
+            try {
+                // a driver may have accepted after this page loaded
+                var orderSnap = await database.collection('restaurant_orders').doc(id).get();
+                if (orderSnap.exists && orderSnap.data().driverID) {
+                    driverId = orderSnap.data().driverID;
+                }
+                if (!driverId) {
+                    return;
+                }
+                var driverRef = database.collection('users').doc(driverId);
+                if (!separateCodLedger) {
+                    await driverRef.update(release);
+                    return;
+                }
+                var commission = round2(orderDeliveryCharge + orderTipAmount + orderDeliveryTaxAmount);
+                var cashCollected = round2(orderGrandTotal);
+                var isCod = String(orderPaymentMethod || '').toLowerCase() == 'cod';
+                var earnRef = database.collection('wallet').doc('earn_' + id);
+                var ledgerRef = database.collection('cod_ledger').doc('cod_' + id);
+                await database.runTransaction(async function(transaction) {
+                    var driverSnap = await transaction.get(driverRef);
+                    var earnSnap = await transaction.get(earnRef);
+                    var ledgerSnap = isCod ? await transaction.get(ledgerRef) : null;
+                    if (!driverSnap.exists) {
+                        return;
+                    }
+                    var driverUpdate = Object.assign({}, release);
+                    if (!earnSnap.exists && commission > 0) {
+                        var wallet = parseFloat(driverSnap.data().wallet_amount);
+                        if (isNaN(wallet)) {
+                            wallet = 0;
+                        }
+                        driverUpdate.wallet_amount = round2(wallet + commission);
+                        transaction.set(earnRef, {
+                            'id': earnRef.id,
+                            'amount': commission,
+                            'date': firebase.firestore.FieldValue.serverTimestamp(),
+                            'isTopUp': true,
+                            'order_id': id,
+                            'payment_method': 'Wallet',
+                            'payment_status': 'success',
+                            'transactionUser': 'driver',
+                            'user_id': driverId,
+                            'note': 'Delivery earnings (completed by admin)'
+                        });
+                    }
+                    transaction.update(driverRef, driverUpdate);
+                    if (isCod && !ledgerSnap.exists) {
+                        transaction.set(ledgerRef, {
+                            'id': ledgerRef.id,
+                            'type': 'collection',
+                            'driverId': driverId,
+                            'orderId': id,
+                            'cashCollected': cashCollected,
+                            'driverCommission': commission,
+                            'netDue': round2(cashCollected - commission),
+                            'settlementId': null,
+                            'createdAt': firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    }
+                });
+            } catch (error) {
+                console.error('Error completing the order for the driver:', error);
+                alert(error.message || error);
+            }
+        }
+
         async function getRefund(orderStatus) {
 
             $('#data-table_processing').show();
@@ -1827,6 +1880,7 @@
             let total_discount = 0;
             let tip_amount = parseFloat(snapshotsProducts.tip_amount || 0);
             let deliveryCharge = parseFloat(snapshotsProducts.deliveryCharge || 0);
+            orderDeliveryTaxAmount = 0;
             let platformFee = parseFloat(snapshotsProducts.platformFee || 0);
             let packagingCharge = parseFloat(snapshotsProducts.vendor.packagingCharge || 0);
 
@@ -1913,6 +1967,9 @@
                             taxAmount = tax.tax;
                         }
                         total_tax_amount += parseFloat(taxAmount);
+                        if(scope.key == "delivery"){
+                            orderDeliveryTaxAmount += parseFloat(taxAmount);
+                        }
                         if(scope.key == "packaging"){
                             orderTaxAmount += parseFloat(taxAmount);
                             orderTaxAmountVendor += parseFloat(taxAmount);
@@ -1929,6 +1986,9 @@
 
             // Final total
             let order_total = order_subtotal + deliveryCharge + tip_amount + packagingCharge + platformFee + total_tax_amount;
+            orderGrandTotal = order_total;
+            orderDeliveryCharge = deliveryCharge;
+            orderTipAmount = tip_amount;
             let order_total_val = formatCurrency(order_total, currencyData);
 
             html = html + '<tr><td class="seprater" colspan="2"><hr><span>{{ trans('lang.sub_total') }}</span></td></tr>';
