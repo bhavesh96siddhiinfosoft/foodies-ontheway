@@ -170,6 +170,9 @@
                                             <h3>{{ trans('lang.driver_detail') }}</h3>
                                         </div>
                                         <div class="card-body">
+                                            <div class="alert alert-info py-2" id="driver_accepted_waiting" style="display: none;">
+                                                {{ trans('lang.driver_accepted_waiting_restaurant') }}
+                                            </div>
                                             <div class="address order_detail-top-box">
                                                 <p>
                                                     <strong>{{ trans('lang.name') }}: </strong><span id="driver_firstName"></span> <span id="driver_lastName"></span><br>
@@ -794,22 +797,35 @@
                     $('#order_completed').hide();
                     $('#order_type').text('{{ trans('lang.order_delivery') }}');
                 }
-                if ((order.driver != '' && order.driver != undefined) && (order.takeAway == false)) {
-                    $('#driver_carName').text(order.driver.carName);
-                    $('#driver_carNumber').text(order.driver.carNumber);
-                    $('#driver_email').html('<a href="mailto:' + order.driver.email + '">' + shortEmail(
-                        order.driver.email) + '</a>');
-                    $('#driver_firstName').text(order.driver.firstName);
-                    $('#driver_lastName').text(order.driver.lastName);
-                    $('#driver_phone').text(shortEditNumber(order.driver.phoneNumber));
+                // With broadcast assignment a driver can accept before the restaurant does: the
+                // order is still "Order Placed" with driverID set, and may not carry the driver's
+                // details yet, so they are read from the driver's own user document.
+                var orderDriver = (order.driver != '' && order.driver != undefined) ? order.driver : null;
+                if (!orderDriver && order.driverID && order.takeAway == false) {
+                    var acceptedDriverSnapshot = await database.collection('users').doc(order.driverID).get();
+                    if (acceptedDriverSnapshot.exists) {
+                        orderDriver = acceptedDriverSnapshot.data();
+                    }
+                }
+                if (orderDriver && (order.takeAway == false)) {
+                    $('#driver_carName').text(orderDriver.carName);
+                    $('#driver_carNumber').text(orderDriver.carNumber);
+                    $('#driver_email').html('<a href="mailto:' + orderDriver.email + '">' + shortEmail(
+                        orderDriver.email) + '</a>');
+                    $('#driver_firstName').text(orderDriver.firstName);
+                    $('#driver_lastName').text(orderDriver.lastName);
+                    $('#driver_phone').text(shortEditNumber(orderDriver.phoneNumber));
+                    if (order.status == 'Order Placed' && order.driverID) {
+                        $('#driver_accepted_waiting').show();
+                    }
                     var zoneId = '';
-                    if (order.driver.hasOwnProperty('zoneId') && order.driver.zoneId.length > 0) {
-                        zoneId = order.driver.zoneId;
-                    } else if (order.hasOwnProperty('driverID')) {
+                    if (orderDriver.hasOwnProperty('zoneId') && orderDriver.zoneId && orderDriver.zoneId.length > 0) {
+                        zoneId = orderDriver.zoneId;
+                    } else if (order.driverID) {
                         var driverSnapshot = await database.collection('users').doc(order.driverID)
                             .get();
-                        var driverData = driverSnapshot.data();
-                        zoneId = driverData.zoneId;
+                        var driverData = driverSnapshot.exists ? driverSnapshot.data() : {};
+                        zoneId = driverData.zoneId ? driverData.zoneId : '';
                     }
                     if (zoneId != '') {
                         database.collection('zone').doc(zoneId).get().then(async function(snapshots) {
@@ -1038,6 +1054,7 @@
                         return false;
                     }
                     var date = firebase.firestore.FieldValue.serverTimestamp();
+                    var updatedData = null;
                     if (isSelfDeliveryByVendor && isSelfDeliveryGlobally && !orderTakeAwayOption) {
                         var deliveryman = $('#deliveryman_list').val();
 
@@ -1067,20 +1084,39 @@
                             'inProgressOrderID': inProgressOrderID
                         });
 
-                        var updatedData = {
+                        updatedData = {
                             'status': "In Transit",
                             'estimatedTimeToPrepare': preparationTime,
                             'driverID': deliveryman,
                             'driver': driverData
                         }
-                    } else {
-                        var updatedData = {
-                            'status': "Order Accepted",
-                            'estimatedTimeToPrepare': preparationTime
-                        }
                     }
 
-                    database.collection('restaurant_orders').doc(id).update(updatedData).then(async function(result) {
+                    var acceptWrite;
+                    if (updatedData) {
+                        acceptWrite = database.collection('restaurant_orders').doc(id).update(updatedData);
+                    } else {
+                        // A driver may have accepted (broadcast) or the customer cancelled since this
+                        // page loaded. Read the order in a transaction and write only status and
+                        // estimatedTimeToPrepare, so an accepting driver's driverID is never lost.
+                        var orderDocRef = database.collection('restaurant_orders').doc(id);
+                        acceptWrite = database.runTransaction(async function(transaction) {
+                            var orderSnap = await transaction.get(orderDocRef);
+                            var current = orderSnap.exists ? orderSnap.data() : {};
+                            if (current.status == 'Order Cancelled') {
+                                throw new Error("{{ trans('lang.order_cancelled_by_customer') }}");
+                            }
+                            if (current.status != 'Order Placed') {
+                                throw new Error("{{ trans('lang.order_already_updated') }}");
+                            }
+                            transaction.update(orderDocRef, {
+                                'status': current.driverID ? "Driver Accepted" : "Order Accepted",
+                                'estimatedTimeToPrepare': preparationTime
+                            });
+                        });
+                    }
+
+                    acceptWrite.then(async function(result) {
 
                         var wId = database.collection('temp').doc().id;
                         database.collection('wallet').doc(wId).set({
@@ -1147,6 +1183,10 @@
                                     }
                                 });
                         });
+                    }).catch(function(error) {
+                        $('#addPreparationTimeModal').modal('hide');
+                        alert(error.message || error);
+                        window.location.reload();
                     });
                 }
             });
@@ -1561,24 +1601,14 @@
                     if (orderData.hasOwnProperty('driverID') && orderData.driverID != null && orderData.driverID != '') {
                         
                         await database.collection('users').doc(orderData.driverID).get().then(async function(snapshot) {
-                            let newOrderRequestData = [];
-                            let inProgressOrderID = [];
                             if (snapshot.exists) {
                                 var driverData = snapshot.data();
                                 driverFcm = driverData.fcmToken;
-                                if (driverData.orderRequestData !== undefined) {
-                                    newOrderRequestData = driverData.orderRequestData.filter(function(oid) {
-                                        return oid !== id;
-                                    });
-                                }
-                                if (driverData.inProgressOrderID !== undefined) {
-                                    inProgressOrderID = driverData.inProgressOrderID.filter(function(oid) {
-                                        return oid !== id;
-                                    });
-                                }
-                                await database.collection('users').doc(driverData.id).update({
-                                    'inProgressOrderID': inProgressOrderID,
-                                    'orderRequestData': newOrderRequestData
+                                // arrayRemove takes out only this order, so another order the
+                                // driver accepts at the same moment is kept
+                                await snapshot.ref.update({
+                                    'inProgressOrderID': firebase.firestore.FieldValue.arrayRemove(id),
+                                    'orderRequestData': firebase.firestore.FieldValue.arrayRemove(id)
                                 })
                             }
 
