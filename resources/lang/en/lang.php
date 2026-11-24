@@ -1642,7 +1642,7 @@ return [
     'import' => 'Import',
     'upload_file' => 'Upload File',
     'sample_file' => 'Sample File',
-    'footer_text' => 'Foodie. All rights reserved.',
+    'footer_text' => 'On The Way. All rights reserved.',
     'logout' => 'Logout',
     'search_driver' => 'Search Driver...',
     'in_tranist' => 'In Tranist',

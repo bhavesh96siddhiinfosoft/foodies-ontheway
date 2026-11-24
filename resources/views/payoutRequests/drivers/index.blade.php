@@ -789,51 +789,65 @@
             var amount = $(this).data('amount');
             var admin_note = $("#admin_note").val();
             jQuery("#data-table_processing").show();
-            database.collection('users').where("id", "==", auth).get().then(function(resultdriver) {
-                if (resultdriver.docs.length) {
-                    var driver = resultdriver.docs[0].data();
-                    var wallet_amount = 0;
-                    if (isNaN(driver.wallet_amount) || driver.wallet_amount == undefined) {
-                        wallet_amount = 0;
-                    } else {
-                        wallet_amount = driver.wallet_amount;
-                    }
-                    price = parseFloat(wallet_amount) + parseFloat(priceadd);
-                    if (!isNaN(price)) {
-                        database.collection('driver_payouts').doc(id).update({
-                            'paymentStatus': 'Reject',
-                            'adminNote': admin_note
-                        }).then(function(result) {
-                            database.collection('users').doc(driver.id).update({
-                                'wallet_amount': price
-                            }).then(async function(result) {
-                                var wId = database.collection('temp').doc().id;
-                                database.collection('wallet').doc(wId).set({
-                                    'amount': parseFloat(priceadd),
-                                    'date': firebase.firestore.FieldValue.serverTimestamp(),
-                                    'id': wId,
-                                    'isTopUp': false,
-                                    'order_id': id,
-                                    'payment_method': 'Wallet',
-                                    'payment_status': 'Refund success',
-                                    'transactionUser': 'driver',
-                                    'user_id': driver.id,
-                                    'note': 'Refund by admin'
-                                });
-                                if (user && user != undefined) {
-                                    var emailData = await sendMailToRestaurant(user, id, 'Disapproved', amount);
-                                    if (emailData) {
-                                        window.location.reload();
-                                    }
-                                } else {
-                                    window.location.reload();
-                                }
-                            });
-                        });
+            var refund = parseFloat(priceadd);
+            var payoutRef = database.collection('driver_payouts').doc(id);
+            var driverRef = database.collection('users').doc(auth);
+            var walletRef = database.collection('wallet').doc(database.collection('temp').doc().id);
+            // One transaction: the refund is added to the wallet the driver has at that moment
+            // (the app may be crediting earnings at the same time), and a payout that is no
+            // longer open - rejected in another tab, or already paid - is never refunded twice.
+            database.runTransaction(async function(transaction) {
+                var payoutSnap = await transaction.get(payoutRef);
+                var driverSnap = await transaction.get(driverRef);
+                if (!driverSnap.exists) {
+                    return 'driver_not_found';
+                }
+                // same statuses the Reject button is shown for
+                var status = payoutSnap.exists ? payoutSnap.data().paymentStatus : 'Reject';
+                if (status == 'Reject' || status == 'Success' || isNaN(refund)) {
+                    return 'not_pending';
+                }
+                var wallet_amount = parseFloat(driverSnap.data().wallet_amount);
+                if (isNaN(wallet_amount)) {
+                    wallet_amount = 0;
+                }
+                transaction.update(payoutRef, {
+                    'paymentStatus': 'Reject',
+                    'adminNote': admin_note
+                });
+                transaction.update(driverRef, {
+                    'wallet_amount': wallet_amount + refund
+                });
+                transaction.set(walletRef, {
+                    'amount': refund,
+                    'date': firebase.firestore.FieldValue.serverTimestamp(),
+                    'id': walletRef.id,
+                    'isTopUp': false,
+                    'order_id': id,
+                    'payment_method': 'Wallet',
+                    'payment_status': 'Refund success',
+                    'transactionUser': 'driver',
+                    'user_id': auth,
+                    'note': 'Refund by admin'
+                });
+                return 'ok';
+            }).then(async function(result) {
+                if (result == 'driver_not_found') {
+                    jQuery("#data-table_processing").hide();
+                    alert('{{trans("lang.driver_not_found")}}');
+                    return;
+                }
+                if (result == 'ok' && user && user != undefined) {
+                    var emailData = await sendMailToRestaurant(user, id, 'Disapproved', amount);
+                    if (emailData) {
+                        window.location.reload();
                     }
                 } else {
-                    alert('{{trans("lang.driver_not_found")}}');
+                    window.location.reload();
                 }
+            }).catch(function(error) {
+                jQuery("#data-table_processing").hide();
+                alert(error.message || error);
             });
         });
         $(document).on("click", "#submit_accept", async function(e) {

@@ -750,7 +750,7 @@
                         payment_method = '<img alt="image" src="' + image +
                             '"  width="30%" height="30%">';
                     } else if (order.payment_method == "wallet") {
-                        image = '{{ asset('images/foodie_wallet.png') }}';
+                        image = '{{ asset('images/ontheway_wallet.png') }}';
                         payment_method = '<img alt="image" src="' + image + '"  width="30%" height="30%" >';
                     } else if (order.payment_method == "paytm") {
                         image = '{{ asset('images/paytm.png') }}';

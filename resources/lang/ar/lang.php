@@ -1642,7 +1642,7 @@ return [
     'import' => 'استيراد',
     'upload_file' => 'رفع ملف',
     'sample_file' => 'ملف نموذج',
-    'footer_text' => 'فودي. جميع الحقوق محفوظة.',
+    'footer_text' => 'On The Way. جميع الحقوق محفوظة.',
     'logout' => 'تسجيل الخروج',
     'search_driver' => 'البحث عن سائق...',
     'in_tranist' => 'قيد النقل',
